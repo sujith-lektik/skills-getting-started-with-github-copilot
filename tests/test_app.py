@@ -1,26 +1,61 @@
+import copy
+
+import pytest
 from fastapi.testclient import TestClient
 
 from src import app as app_module
 
 
-client = TestClient(app_module.app)
+@pytest.fixture(autouse=True)
+def reset_activities():
+    original_state = copy.deepcopy(app_module.activities)
+    yield
+    app_module.activities.clear()
+    app_module.activities.update(copy.deepcopy(original_state))
 
 
-def test_unregister_participant_removes_them_from_activity():
+@pytest.fixture
+def client():
+    with TestClient(app_module.app) as test_client:
+        yield test_client
+
+
+def test_signup_for_activity_adds_participant(client):
+    activity_name = "Chess Club"
+    email = "newstudent@mergington.edu"
+
+    response = client.post(
+        f"/activities/{activity_name}/signup",
+        params={"email": email},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": f"Signed up {email} for {activity_name}"}
+    assert email in app_module.activities[activity_name]["participants"]
+
+
+def test_duplicate_signup_returns_bad_request(client):
     activity_name = "Chess Club"
     email = "michael@mergington.edu"
-    original_participants = app_module.activities[activity_name]["participants"][:]
 
-    try:
-        response = client.delete(
-            f"/activities/{activity_name}/signup",
-            params={"email": email},
-        )
+    response = client.post(
+        f"/activities/{activity_name}/signup",
+        params={"email": email},
+    )
 
-        assert response.status_code == 200
-        assert "Unregistered" in response.json()["message"]
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Student is already signed up for this activity"}
 
-        refreshed_activities = client.get("/activities").json()
-        assert email not in refreshed_activities[activity_name]["participants"]
-    finally:
-        app_module.activities[activity_name]["participants"] = original_participants
+
+def test_unregister_for_activity_removes_participant(client):
+    activity_name = "Chess Club"
+    email = "michael@mergington.edu"
+
+    response = client.delete(
+        f"/activities/{activity_name}/signup",
+        params={"email": email},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": f"Unregistered {email} from {activity_name}"}
+    assert email not in app_module.activities[activity_name]["participants"]
